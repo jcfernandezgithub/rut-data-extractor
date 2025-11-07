@@ -8,13 +8,11 @@ import requests
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from playwright.sync_api import sync_playwright
-
 RUT_URL = "https://r.rutificador.co/pr/{rut}"
 
 app = FastAPI(title="Rutificador Proxy", version="1.0.0")
 
-# CORS abierto para que tu front consuma directo
+# CORS abierto para frontends
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -35,7 +33,6 @@ def format_rut_lenient(raw: str) -> Optional[str]:
     if len(s) < 2:
         return None
     body, dv = s[:-1], s[-1].upper()
-    # Puntitos cada 3 desde la derecha
     rev = body[::-1]
     chunks = [rev[i : i + 3] for i in range(0, len(rev), 3)]
     dotted = ".".join(c[::-1] for c in chunks[::-1])
@@ -51,17 +48,27 @@ COMMON_HEADERS = {
     "Cache-Control": "no-cache",
 }
 
+TD_RX = re.compile(r"<td[^>]*>(.*?)</td>", flags=re.IGNORECASE | re.DOTALL)
+TR_RX = re.compile(r"<tr[^>]*>([\s\S]*?)</tr>", flags=re.IGNORECASE)
+
 def fetch_via_requests(url: str, timeout: int = 20) -> requests.Response:
-    resp = requests.get(
-        url,
-        headers=COMMON_HEADERS,
-        timeout=timeout,
-        allow_redirects=True,
-    )
-    return resp
+    return requests.get(url, headers=COMMON_HEADERS, timeout=timeout, allow_redirects=True)
 
 def fetch_via_playwright(url: str, wait_ms: int = 3500) -> str:
-    # Navegador real para pasar Cloudflare (Chromium headless)
+    """
+    Fallback con navegador real (Chromium headless) para pasar Cloudflare.
+    Importa Playwright en tiempo de uso para no romper el arranque si no está instalado.
+    """
+    try:
+        from playwright.sync_api import sync_playwright  # import perezoso
+    except Exception as e:
+        raise RuntimeError(
+            "Playwright no está instalado. Si usás Nixpacks, agrega "
+            "'playwright==1.55.0' a requirements.txt y en build ejecuta: "
+            "'python -m playwright install --with-deps chromium'. "
+            "Si usás Dockerfile, usa la imagen oficial de Playwright."
+        ) from e
+
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=True,
@@ -76,8 +83,8 @@ def fetch_via_playwright(url: str, wait_ms: int = 3500) -> str:
             },
         )
         page = ctx.new_page()
-        resp = page.goto(url, wait_until="domcontentloaded", timeout=30000)
-        # Espera leve por challenge/JS
+        page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        # pequeña espera por challenge
         time.sleep(wait_ms / 1000.0)
         try:
             page.wait_for_selector("tr td", timeout=4000)
@@ -87,8 +94,8 @@ def fetch_via_playwright(url: str, wait_ms: int = 3500) -> str:
         browser.close()
     return html or ""
 
-TD_RX = re.compile(r"<td[^>]*>(.*?)</td>", flags=re.IGNORECASE | re.DOTALL)
-TR_RX = re.compile(r"<tr[^>]*>([\s\S]*?)</tr>", flags=re.IGNORECASE)
+def ensure_has_tds(html: str) -> bool:
+    return bool(re.search(r"<tr[^>]*>[\s\S]*?<td[^>]*>", html or "", re.IGNORECASE))
 
 def extract_first_tr_values(html: str) -> List[str]:
     m = TR_RX.search(html or "")
@@ -98,7 +105,6 @@ def extract_first_tr_values(html: str) -> List[str]:
     values: List[str] = []
     for td in TD_RX.finditer(tr_content):
         txt = td.group(1)
-        # limpiar etiquetas internas y colapsar espacios
         clean = re.sub(r"<[^>]+>", "", txt or "")
         clean = re.sub(r"\s+", " ", clean.replace("\u00A0", " ")).strip()
         if clean:
@@ -120,9 +126,6 @@ def map_values(values: List[str]) -> Dict[str, str]:
             "comuna": comuna,
         }
     return {f"campo{i+1}": v for i, v in enumerate(values)}
-
-def ensure_has_tds(html: str) -> bool:
-    return bool(re.search(r"<tr[^>]*>[\s\S]*?<td[^>]*>", html or "", re.IGNORECASE))
 
 # ---------- Endpoints ----------
 @app.get("/health")
@@ -162,7 +165,7 @@ def get_rut(rut: str, inspect: Optional[bool] = False) -> Dict[str, Any]:
         print("requests error:", str(e))
 
     # 2) Fallback Playwright (Cloudflare / sin <td>)
-    print("[rutificador] Axios/requests bloqueado o sin <td>. Probando Playwright…")
+    print("[rutificador] requests bloqueado o sin <td>. Probando Playwright…")
     html = fetch_via_playwright(url)
     print("------ [playwright] snippet ------")
     print(html[:600])
@@ -210,6 +213,6 @@ def get_rut_raw(rut: str):
     return {"status": 200, "source": url, "html": html[:20000]}
 
 if __name__ == "__main__":
-    # Railway expone PORT en env; fallback 8000
+    # Railway expone PORT; fallback 8000
     port = int(os.getenv("PORT", "8000"))
     uvicorn.run("app:app", host="0.0.0.0", port=port, workers=1)
