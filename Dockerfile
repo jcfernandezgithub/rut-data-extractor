@@ -1,19 +1,14 @@
-# Imagen con Python + Playwright + navegadores
-FROM mcr.microsoft.com/playwright/python:v1.47.0
+# Sube la imagen a v1.55.0-noble (match con la lib)
+FROM mcr.microsoft.com/playwright/python:v1.55.0-noble
 
-# Evitar buffering de logs
 ENV PYTHONUNBUFFERED=1
 WORKDIR /app
 
-# Instalar deps Python
+# Instala solo tus deps (sin playwright)
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copiar app
 COPY app.py .
 
-# Exponer puerto (Railway setea PORT, pero esto ayuda local)
 EXPOSE 8000
-
-# Comando
 CMD ["python", "app.py"]
