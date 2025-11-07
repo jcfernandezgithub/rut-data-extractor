@@ -12,14 +12,14 @@ RUT_URL = "https://r.rutificador.co/pr/{rut}"
 
 app = FastAPI(title="Rutificador Proxy", version="1.0.0")
 
-# CORS abierto para frontends
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,         # <- necesario si el front manda credenciales
+    allow_origin_regex=".*",  # coincide con cualquier origen y lo refleja
+    allow_credentials=True,   # permite cookies/Authorization
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["*"],
+    max_age=86400,
 )
 
 # ---------- Helpers ----------
