@@ -52,7 +52,7 @@ TD_RX = re.compile(r"<td[^>]*>(.*?)</td>", flags=re.IGNORECASE | re.DOTALL)
 TR_RX = re.compile(r"<tr[^>]*>([\s\S]*?)</tr>", flags=re.IGNORECASE)
 
 def fetch_via_requests(url: str, timeout: int = 20) -> requests.Response:
-    return requests.get(url, headers=COMMON_HEADERS, timeout=timeout, allow_redirects=True)
+    return requests.post(url, headers=COMMON_HEADERS, timeout=timeout, allow_redirects=True)
 
 def fetch_via_playwright(url: str, wait_ms: int = 3500) -> str:
     """
